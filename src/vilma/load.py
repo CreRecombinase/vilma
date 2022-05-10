@@ -22,10 +22,11 @@ def load_variant_list(variant_filename):
     variants = pd.read_csv(variant_filename,
                            header=0,
                            delim_whitespace=True).drop_duplicates()
+    all_cols = ','.join(variants.columns)
     if 'ID' not in variants.columns:
-        raise ValueError('Variant file must contain a column labeled ID')
+        raise ValueError(f'Variant file must contain a column labeled ID (cols:{all_cols})')
     if 'A1' not in variants.columns:
-        raise ValueError('Variant file must contain a column labeled A1')
+        raise ValueError(f'Variant file must contain a column labeled A1 (cols:{all_cols})')
     if 'A2' not in variants.columns:
         if 'REF' not in variants.columns or 'ALT' not in variants.columns:
             raise ValueError('Variant file must contain a column labeled A2')
@@ -119,6 +120,11 @@ def load_sumstats(sumstats_filename, variants):
     return sumstats, np.where(missing)[0].tolist()
 
 
+
+
+
+
+
 def load_ld_from_schema(schema_path, variants, denylist, ldthresh, mmap=False):
     """
     Load block matrix using specified schema, and filter to variants.
@@ -150,7 +156,7 @@ def load_ld_from_schema(schema_path, variants, denylist, ldthresh, mmap=False):
     if mmap:
         hdf_file = h5py.File(TemporaryFile(), 'w')
     with open(schema_path, 'r') as schema:
-        for line in schema:
+        for line_no, line in enumerate(schema):
             snp_path, ld_path = line.split()
             # relative path:
             if snp_path[0] != '/':
@@ -167,7 +173,7 @@ def load_ld_from_schema(schema_path, variants, denylist, ldthresh, mmap=False):
 
             ld_shape = (snp_metadata.shape[0], snp_metadata.shape[0])
 
-            logging.info('LD matrix shape: %s', (ld_shape,))
+            logging.info('LD matrix shape: %s on line: %d', (ld_shape, line_no))
 
             variant_indices = np.copy(
                 snp_metadata.ID.isin(variants.ID).to_numpy()

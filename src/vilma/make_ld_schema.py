@@ -64,30 +64,42 @@ def _get_ld_blocks(bedfile_name):
     return ld_table_dict
 
 
-def _process_blocks(blocked_data, outfile_name, ldthresh=-1):
-    """Take genetic data and variant IDs, compute correlation and write"""
+def write_block(block,key, corrmat,outfile_name, legend):
+    """Write info to block file"""
     outpath = outfile_name + '_{}:{}'
     rel_outpath = outpath.split('/')[-1]
     var_outpath = outfile_name + '_{}:{}.var'
     rel_var_outpath = var_outpath.split('/')[-1]
+    cormat_outpath = outpath.format(*key.split())
+    np.save(cormat_outpath, corrmat)
+    with open(var_outpath.format(*key.split()), 'w') as ofh:
+        for var in block['IDs']:
+            ofh.write('\t'.join(map(str, var)) + '\n')
+            legend.append(rel_var_outpath.format(*key.split())
+                          + '\t'
+                          + (rel_outpath + '.npy').format(*key.split()))
+    return legend
+
+
+def _process_blocks(blocked_data, outfile_name, ldthresh=-1):
+    """Take genetic data and variant IDs, compute correlation and write"""
     legend = []
-    for key in blocked_data:
+    for key,block in blocked_data.items():
         logging.info('...computing correlations for block %s',
                      key)
-        corrmat = blocked_data[key]['SNPs'].corr().to_numpy()
+        corrmat = block['SNPs'].corr().to_numpy()
+        logging.info(f'corrmat {key} is shape: {corrmat.shape}')
         if ldthresh >= 0:
-            trunc_mat = matrix_structures.LowRankMatrix(X=corrmat,
-                                                        t=ldthresh)
-            corrmat = np.vstack([trunc_mat.u,
-                                 trunc_mat.s.reshape((1, -1))])
-        np.save(outpath.format(*key.split()), corrmat)
-        with open(var_outpath.format(*key.split()), 'w') as ofh:
-            for var in blocked_data[key]['IDs']:
-                ofh.write('\t'.join(map(str, var)) + '\n')
-        legend.append(rel_var_outpath.format(*key.split())
-                      + '\t'
-                      + (rel_outpath + '.npy').format(*key.split()))
-
+            try:
+                trunc_mat = matrix_structures.LowRankMatrix(X=corrmat,
+                                                            t=ldthresh)
+                corrmat = np.vstack([trunc_mat.u,
+                                     trunc_mat.s.reshape((1, -1))])
+            except ValueError as e:
+                logging.error(f"writing {key} before error: {e}")
+                write_block(block, key, corrmat, outfile_name, legend)
+                raise
+        legend = write_block(block, key, corrmat, outfile_name, legend)
     with open(outfile_name + '.schema', 'a') as ofh:
         ofh.write('\n'.join(legend))
 

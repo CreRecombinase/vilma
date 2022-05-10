@@ -219,7 +219,7 @@ vilma fit --ld-schema <comma_delimited_list_of_manifest_files> \
     --learn-scaling \
     --annotations <annotation_file> \
     --logfile <log_file> \
-    --extract <snp_file>
+    --extract <(cat <(echo "ID") <snp_file>
 ```
 
 We detail the different options below. 
