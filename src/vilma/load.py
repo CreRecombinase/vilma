@@ -13,6 +13,7 @@ from tempfile import TemporaryFile
 import numpy as np
 import pandas as pd
 import h5py
+from tqdm import tqdm
 from vilma.matrix_structures import LowRankMatrix
 from vilma.matrix_structures import BlockDiagonalMatrix
 
@@ -119,9 +120,152 @@ def load_sumstats(sumstats_filename, variants):
     sumstats.loc[flip_allele, 'BETA'] = -sumstats.loc[flip_allele, 'BETA']
     return sumstats, np.where(missing)[0].tolist()
 
+def flip_and_intersect_variants(variants, snp_metadata, denylist):
+    """
+    Intersect variants from snp_metadata and prespecified list.
+    """
+    variant_indices = np.copy(
+        snp_metadata.ID.isin(variants.ID).to_numpy()
+    )
+    if np.sum(variant_indices) <= 0:
+        return (None, None, None)
+    kept_ids = snp_metadata.ID[variant_indices]
+    idx = variants.loc[kept_ids].old_idx.to_numpy().flatten()
+    keep = np.isin(idx, denylist, invert=True)
+    to_change = np.where(variant_indices)[0][~keep]
+    variant_indices[to_change] = False
+    kept_ids = kept_ids.iloc[keep]
+    idx = idx[keep]
+    if len(idx) == 0:
+        return (None, None, None)
+    signs = np.ones(len(idx))
+    stay = [
+        (xa1 == ya1) and (xa2 == ya2)
+        for xa1, ya1, xa2, ya2 in
+        zip(variants['A1'].iloc[idx].to_numpy(),
+            snp_metadata['A1'].iloc[variant_indices].to_numpy(),
+            variants['A2'].iloc[idx].to_numpy(),
+            snp_metadata['A2'].iloc[variant_indices].to_numpy())
+    ]
+    stay = np.array(stay)
+    flip = [
+        (xa1 == ya1) and (xa2 == ya2)
+        for xa1, ya2, xa2, ya1 in
+        zip(variants['A1'].iloc[idx].to_numpy(),
+            snp_metadata['A1'].iloc[variant_indices].to_numpy(),
+            variants['A2'].iloc[idx].to_numpy(),
+            snp_metadata['A2'].iloc[variant_indices].to_numpy())
+    ]
+    flip = np.array(flip)
+    mismatch = np.logical_and(~flip, ~stay)
+    if len(idx[~mismatch]) == 0:
+        return None
+    signs[flip] = -1
+    return variant_indices,signs,mismatches
 
 
 
+def reshape_ld_matrix(ld_path, variant_indices, signs, mismatch, hdf_file):
+    """Reshapes and subsets a block of the LD matrix."""
+    ld_matrix = np.copy(np.load(ld_path))
+    if len(ld_matrix.shape) == 0:
+        ld_matrix = ld_matrix[None, None]
+        if ld_matrix.shape[0] == ld_matrix.shape[1]:
+            logging.info('Proportion of variant indices '
+                         'being used: %e',
+                         np.mean(variant_indices))
+            accepted_matrix = np.copy(
+                ld_matrix[np.ix_(variant_indices, variant_indices)]
+            )
+            accepted_matrix = accepted_matrix * np.outer(signs, signs)
+            accepted_matrix = accepted_matrix[np.ix_(~mismatch,
+                                                     ~mismatch)]
+            perm.append(idx[~mismatch])
+            svds.append(
+                LowRankMatrix(accepted_matrix,
+                              ldthresh,
+                              hdf_file=hdf_file)
+            )
+        else:
+            if ld_matrix.shape[0] < ld_matrix.shape[1]:
+                raise ValueError('Bad LD matrix.')
+            num_snps = (ld_matrix.shape[0] - 1)
+            if num_snps != variant_indices.shape[0]:
+                raise ValueError('Bad LD matrix.')
+            u_mat = np.copy(ld_matrix[0:num_snps])
+            s_vec = np.copy(ld_matrix[num_snps])
+            v_mat = np.copy(u_mat.T)
+
+            u_mat = u_mat[variant_indices, :]
+            v_mat = v_mat[:, variant_indices]
+
+            u_mat = signs.reshape((-1, 1)) * u_mat
+            v_mat = signs.reshape((1, -1)) * v_mat
+
+            u_mat = np.copy(u_mat[~mismatch])
+            v_mat = np.copy(v_mat[:, ~mismatch])
+
+            perm.append(idx[~mismatch])
+            svds.append(
+                LowRankMatrix(u=u_mat,
+                              s=s_vec,
+                              v=v_mat,
+                              D=np.zeros(u_mat.shape[0]),
+                              hdf_file=hdf_file)
+            )
+
+
+def _load_ld(snp_path, ld_path, variants, denylist, ldthresh, hdf_file = None):
+    """
+    Load a single block for the block matrix
+    args:
+         snp_path: path to the .var file tsv with snp information
+         ld_path: path to the npy file with the LD information
+         variants: a pandas DataFrame specifying which variants we want LD for
+         denylist: Variants which should be treated as missing for the purposes
+            of this LD matrix.
+         ldthresh: LD threshold for low rank approximations to the LD matrix. A
+            threshold of t guarantees that SNPs with r^2 lower than t
+            will be linearly independent.
+         hdf_file: hdf file handle to use if using disk backend
+    returns:
+      A tuple of elements
+    """
+
+    snp_metadata = pd.read_csv(snp_path,
+                               header=None,
+                               delim_whitespace=True,
+                               names=['ID', 'CHROM', 'BP',
+                                      'CM', 'A1', 'A2'])
+
+    ld_shape = (snp_metadata.shape[0], snp_metadata.shape[0])
+
+    logging.info('LD matrix shape: %s', ld_shape)
+
+
+    variant_indices, signs, mismatch = flip_and_intersect_variants(
+        variants,
+        snp_metadata,
+        denylist)
+
+
+    # Need to add in variants that are not in the LD matrix
+    # Set them to have massive variance
+    if len(perm) > 0:
+        perm = np.concatenate(perm)
+    else:
+        perm = np.array([], dtype=float)
+    missing = set(np.arange(variants.shape[0]).tolist()) - set(perm.tolist())
+    missing = np.array(list(missing), dtype=int)
+    logging.info('Loaded a total of %d variants.')
+    logging.info('Missing LD info for %d variants. They will be ignored '
+                 'during optimization.', len(missing))
+    logging.info('The alleles did not match for %d variants. They were '
+                 'flipped', total_flipped)
+    perm = np.concatenate([perm, missing])
+    if not np.all(perm == np.arange(len(perm))):
+        logging.info('The variants in the extract file and the variants in '
+                     'the LD matrix were not in the same order.')
 
 
 
@@ -155,66 +299,68 @@ def load_ld_from_schema(schema_path, variants, denylist, ldthresh, mmap=False):
     hdf_file = None
     if mmap:
         hdf_file = h5py.File(TemporaryFile(), 'w')
+
     with open(schema_path, 'r') as schema:
-        for line_no, line in enumerate(schema):
-            snp_path, ld_path = line.split()
-            # relative path:
-            if snp_path[0] != '/':
-                snp_path = ('/'.join(schema_path.split('/')[:-1])
-                            + '/' + snp_path)
-                ld_path = ('/'.join(schema_path.split('/')[:-1])
-                           + '/' + ld_path)
+        schema_lines = schema.readlines()
+    for line_no, line in enumerate(tqdm(schema_lines)):
+        snp_path, ld_path = line.rstrip().split()
+        # relative path:
+        if snp_path[0] != '/':
+            snp_path = ('/'.join(schema_path.split('/')[:-1])
+                        + '/' + snp_path)
+            ld_path = ('/'.join(schema_path.split('/')[:-1])
+                       + '/' + ld_path)
 
-            snp_metadata = pd.read_csv(snp_path,
-                                       header=None,
-                                       delim_whitespace=True,
-                                       names=['ID', 'CHROM', 'BP',
-                                              'CM', 'A1', 'A2'])
+        snp_metadata = pd.read_csv(snp_path,
+                                   header=None,
+                                   delim_whitespace=True,
+                                   names=['ID', 'CHROM', 'BP',
+                                          'CM', 'A1', 'A2'])
 
-            ld_shape = (snp_metadata.shape[0], snp_metadata.shape[0])
+        ld_shape = (snp_metadata.shape[0], snp_metadata.shape[0])
 
-            logging.info('LD matrix shape: %s on line: %d', (ld_shape, line_no))
+        logging.info('LD matrix shape: %s on line: %d', ld_shape, line_no)
 
-            variant_indices = np.copy(
-                snp_metadata.ID.isin(variants.ID).to_numpy()
-            )
-            if np.sum(variant_indices) > 0:
-                kept_ids = snp_metadata.ID[variant_indices]
-                idx = var_reidx.loc[kept_ids].old_idx.to_numpy().flatten()
-                keep = np.isin(idx, denylist, invert=True)
-                to_change = np.where(variant_indices)[0][~keep]
-                variant_indices[to_change] = False
-                kept_ids = kept_ids.iloc[keep]
-                idx = idx[keep]
-                if len(idx) == 0:
-                    continue
-                signs = np.ones(len(idx))
-                stay = [
-                    (xa1 == ya1) and (xa2 == ya2)
-                    for xa1, ya1, xa2, ya2 in
-                    zip(variants['A1'].iloc[idx].to_numpy(),
-                        snp_metadata['A1'].iloc[variant_indices].to_numpy(),
-                        variants['A2'].iloc[idx].to_numpy(),
-                        snp_metadata['A2'].iloc[variant_indices].to_numpy())
-                ]
-                stay = np.array(stay)
-                flip = [
-                    (xa1 == ya1) and (xa2 == ya2)
-                    for xa1, ya2, xa2, ya1 in
-                    zip(variants['A1'].iloc[idx].to_numpy(),
-                        snp_metadata['A1'].iloc[variant_indices].to_numpy(),
-                        variants['A2'].iloc[idx].to_numpy(),
-                        snp_metadata['A2'].iloc[variant_indices].to_numpy())
-                ]
-                flip = np.array(flip)
-                total_flipped += flip.sum()
-                mismatch = np.logical_and(~flip, ~stay)
-                if len(idx[~mismatch]) == 0:
-                    continue
-                signs[flip] = -1
-                ld_matrix = np.copy(np.load(ld_path))
-                if len(ld_matrix.shape) == 0:
-                    ld_matrix = ld_matrix[None, None]
+        variant_indices = np.copy(
+            snp_metadata.ID.isin(variants.ID).to_numpy()
+        )
+        if np.sum(variant_indices) > 0:
+            kept_ids = snp_metadata.ID[variant_indices]
+            idx = var_reidx.loc[kept_ids].old_idx.to_numpy().flatten()
+            keep = np.isin(idx, denylist, invert=True)
+            to_change = np.where(variant_indices)[0][~keep]
+            variant_indices[to_change] = False
+            kept_ids = kept_ids.iloc[keep]
+            idx = idx[keep]
+            if len(idx) == 0:
+                continue
+            signs = np.ones(len(idx))
+            stay = [
+                (xa1 == ya1) and (xa2 == ya2)
+                for xa1, ya1, xa2, ya2 in
+                zip(variants['A1'].iloc[idx].to_numpy(),
+                    snp_metadata['A1'].iloc[variant_indices].to_numpy(),
+                    variants['A2'].iloc[idx].to_numpy(),
+                    snp_metadata['A2'].iloc[variant_indices].to_numpy())
+            ]
+            stay = np.array(stay)
+            flip = [
+                (xa1 == ya1) and (xa2 == ya2)
+                for xa1, ya2, xa2, ya1 in
+                zip(variants['A1'].iloc[idx].to_numpy(),
+                    snp_metadata['A1'].iloc[variant_indices].to_numpy(),
+                    variants['A2'].iloc[idx].to_numpy(),
+                    snp_metadata['A2'].iloc[variant_indices].to_numpy())
+            ]
+            flip = np.array(flip)
+            total_flipped += flip.sum()
+            mismatch = np.logical_and(~flip, ~stay)
+            if len(idx[~mismatch]) == 0:
+                continue
+            signs[flip] = -1
+            ld_matrix = np.copy(np.load(ld_path))
+            if len(ld_matrix.shape) == 0:
+                ld_matrix = ld_matrix[None, None]
                 if ld_matrix.shape[0] == ld_matrix.shape[1]:
                     logging.info('Proportion of variant indices '
                                  'being used: %e',

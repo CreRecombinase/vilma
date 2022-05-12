@@ -277,7 +277,7 @@ class BlockDiagonalMatrix():
     def __init__(self, matrices, inverse=False, perm=None,
                  missing=None):
         """
-        Build a BlockDiagonalMatrix from a list of symmetric component matrices
+        Build a BlockDiagonalMatrix from a list of symmetric component matrices.
 
         Args:
             matrices: a list of LowRankMatrices representing the component
