@@ -23,5 +23,6 @@ vilma fit --logfile - \
 	--samplesizes 300e3 \
 	--names ukbb \
 	--learn-scaling \
+        --verbose \
 	--extract keep_variants.txt \
 	--load-checkpoint example_vilma_run.npz example_vilma_run.covariance.pkl

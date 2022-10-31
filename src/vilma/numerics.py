@@ -2,7 +2,7 @@
 Optimized numerical routines for VI schemes
 """
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, gdb
 
 
 EPSILON = 1e-100    # fudge factor to avoid division by zero
@@ -116,9 +116,12 @@ def fast_inner_product_comp(vi_mu, mixture_prec, vi_delta):
 
 
 @njit('float64[:, :](float64[:, :], int64[:], int64)',
-      parallel=True, cache=False)
+      parallel=True, cache=False, debug=True)
 def sum_annotations(deltas, annotations, num_annotations):
     """Compute vector sum of deltas with the same annotations"""
+    gdb()
+    if deltas.shape[0] != annotations.shape[0]:
+        raise ValueError('annotations.shape[0] must be equal to deltas.shape[0].')
     to_return = np.zeros((num_annotations, deltas.shape[1]))
     for a in range(num_annotations):
         summand = np.zeros(deltas.shape[1], dtype=np.float64)

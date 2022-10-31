@@ -728,9 +728,7 @@ class MultiPopVI(VIScheme):
                                                   self.mixture_prec,
                                                   self.vi_sigma,
                                                   key='vi_sigma_match')
-        self.sigma_summary = (self.log_det
-                              - self.vi_sigma_log_det.T
-                              + self.vi_sigma_matches)
+        self.sigma_summary = (self.log_det - self.vi_sigma_log_det.T + self.vi_sigma_matches)
 
     def _update_error_scaling(self, params):
         """Update the standard error scaling hyperparameter"""
@@ -825,14 +823,15 @@ class MultiPopVI(VIScheme):
     def _update_hyper_delta(self, vi_mu, vi_delta, hyper_delta,
                             orig_obj, L, idx, lsr):
         """Update the mixture weights hyperparameter"""
+
         if orig_obj is None:
             orig_obj = self.elbo(
                 (vi_mu, vi_delta, hyper_delta)
             )
+        logging.info('...vi_delta.shape = %d,%d self.annotations.shape[0] = %d',
+                     vi_delta.shape[0],vi_delta.shape[1], self.annotations.shape[0])
         new_hyper_delta = numerics.sum_annotations(
-            vi_delta,
-            self.annotations,
-            self.num_annotations
+            vi_delta,self.annotations,self.num_annotations
         )
         new_hyper_delta = np.maximum(
             new_hyper_delta

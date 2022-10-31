@@ -65,6 +65,7 @@ def _get_ld_blocks(bedfile_name):
     return ld_table_dict
 
 
+
 def _process_blocks(blocked_data, outfile_name, ldthresh=-1):
     """Take genetic data and variant IDs, compute correlation and write"""
     outpath = outfile_name + '_{}:{}'

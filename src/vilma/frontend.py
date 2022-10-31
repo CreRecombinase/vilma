@@ -10,7 +10,9 @@ from vilma.sim import main as sim
 from vilma.sim import args as sim_args
 from vilma.vi_options import main as fit
 from vilma.vi_options import args as fit_args
+import faulthandler
 
+faulthandler.enable()
 COMMANDS = {
     'make_ld_schema': {'cmd': make_ld_schema, 'parser': make_ld_schema_args},
     'check_ld_schema': {'cmd': check_ld_schema,
@@ -66,7 +68,7 @@ def main():
     except KeyError:
         parser.print_help()
         exit()
-    level = 10 if args.verbose else 30
+    level = 20 if args.verbose else 30
     if args.logfile == '-':
         logging.basicConfig(level=level)
     elif args.logfile:

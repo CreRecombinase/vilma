@@ -41,6 +41,7 @@ vilma fit --logfile - \
 	-K 81 \
 	--init-hg 0.2 \
 	--samplesizes 300e3 \
+        --verbose \
 	--names ukbb \
 	--learn-scaling \
 	--extract ${EXAMPLEDIR}/keep_variants.txt
